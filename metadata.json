@@ -1,0 +1,5 @@
+{
+  "name": "Editor Casanobree Imóveis",
+  "description": "Edite fotos de imóveis usando comandos de texto com o poder do Gemini 2.5 Flash.",
+  "requestFramePermissions": []
+}

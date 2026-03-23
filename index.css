@@ -1,0 +1,24 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+/* O Tailwind agora é carregado pelo CDN no HTML, mantemos apenas estilos customizados */
+
+/* Custom Scrollbar */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #171717;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #404040;
+  border-radius: 3px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #525252;
+}
+
+body {
+  background-color: #0a0a0a;
+  color: #f8fafc;
+  margin: 0;
+}

@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  # ----------------------------------------------------------------
+  # APP: Casanobree Editor
+  # ----------------------------------------------------------------
+  casanobree-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - API_KEY=${API_KEY}
+    container_name: casanobree-app
+    restart: unless-stopped
+    networks:
+      - proxy-network
+
+  # ----------------------------------------------------------------
+  # PROXY: Nginx Proxy Manager
+  # ----------------------------------------------------------------
+  nginx-proxy:
+    image: 'jc21/nginx-proxy-manager:latest'
+    container_name: nginx-proxy-manager
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '81:81'
+      - '443:443'
+    volumes:
+      - ./data/npm/data:/data
+      - ./data/npm/letsencrypt:/etc/letsencrypt
+    environment:
+      - DB_SQLITE_FILE=/data/database.sqlite
+    networks:
+      - proxy-network
+    depends_on:
+      - casanobree-app
+
+networks:
+  proxy-network:
+    name: proxy-network
+    driver: bridge

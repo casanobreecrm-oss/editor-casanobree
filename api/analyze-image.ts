@@ -25,7 +25,7 @@ export default async function handler(req: any, res: any) {
         console.log("🚀 [Backend] Inicializando Gemini Genius...");
         const ai = new GoogleGenAI({ apiKey });
 
-        const model = "gemini-2.0-flash";
+        const model = "gemini-2.5-flash-image";
 
         // Cria o prompt do sistema para instruir o Gemini
         const systemInstruction = `

@@ -1,5 +1,5 @@
 /**
- * Analisa uma imagem e um prompt usando o Gemini 2.0 Flash via Backend
+ * Analisa uma imagem e um prompt usando o Gemini 2.5 Flash Image via Backend
  * para otimizar o prompt para o gerador de imagens (FLUX).
  */
 export const analyzeImageWithGemini = async (

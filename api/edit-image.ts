@@ -1,3 +1,5 @@
+import { GoogleGenAI } from '@google/genai';
+
 export const config = {
     api: {
         bodyParser: {
@@ -13,56 +15,49 @@ export default async function handler(req: any, res: any) {
 
     try {
         const { base64Data, mimeType, prompt, secondaryImage } = req.body;
-        const apiKey = process.env.HUGGINGFACE_API_KEY;
+        const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
 
         if (!apiKey) {
-            return res.status(500).json({ error: 'HUGGINGFACE_API_KEY não configurada no servidor.' });
+            return res.status(500).json({ error: 'GEMINI_API_KEY não configurada no servidor.' });
         }
 
-        const model = "runwayml/stable-diffusion-v1-5";
-        const apiUrl = `https://api-inference.huggingface.co/models/${model}`;
+        console.log("🚀 [Backend] Inicializando Gemini para edição visual...");
+        const ai = new GoogleGenAI({ apiKey });
 
-        console.log("🚀 [Backend] Enviando requisição para Hugging Face API...");
-
-        // Converte base64 para buffer (Node.js)
-        const base64WithoutPrefix = base64Data.replace(/^data:image\/\w+;base64,/, "");
-        const buffer = Buffer.from(base64WithoutPrefix, 'base64');
+        const model = "gemini-2.5-flash-image";
 
         // Cria o prompt completo
         let fullPrompt = prompt;
         if (secondaryImage) {
-            fullPrompt += " (com marca d'água/logo aplicada)";
+            fullPrompt += " (aplique a marca d'água ou logo informada visualmente)";
         }
 
-        // Para a Inference API, podemos enviar FormData ou o binário diretamente
-        // no body com o prompt em cabeçalhos ou estrutura específica.
-        // Mas a implementação anterior usava FormData.
-        // No Node.js (Vercel), FormData é nativo em versões recentes do Node (18+),
-        // ou podemos usar o pacote form-data se der erro, mas Vercel roda com Node atualizado.
-        
-        const formData = new FormData();
-        formData.append("inputs", fullPrompt);
-        
-        // No Node.js recente, FormData aceita Blaob
-        const blob = new Blob([buffer], { type: mimeType });
-        formData.append("image", blob, "image.png");
+        const systemInstruction = `
+Você é um modelo de edição visual avançado. Receba a imagem original e o prompt do usuário, e gere a nova versão da foto editada de acordo com as instruções.
+Retorne EXCLUSIVAMENTE a imagem processada em formato base64 puro (sem prefixo data:image/png;base64). Não adicione nenhum texto explicativo, Markdown ou aspas. Apenas a string base64.
+        `.trim();
 
-        const response = await fetch(apiUrl, {
-            method: "POST",
-            headers: {
-                Authorization: `Bearer ${apiKey}`,
-            },
-            body: formData,
+        // Remove o prefixo se existir
+        const base64WithoutPrefix = base64Data.replace(/^data:image\/\w+;base64,/, "");
+
+        const response = await ai.models.generateContent({
+            model: model,
+            contents: [
+                {
+                    inlineData: {
+                        mimeType: mimeType || "image/jpeg",
+                        data: base64WithoutPrefix
+                    }
+                },
+                { text: systemInstruction + "\\n\\nInstrução do usuário: " + fullPrompt }
+            ]
         });
 
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error("❌ Erro da API Hugging Face:", errorText);
-            return res.status(response.status).json({ error: `Erro Hugging Face: ${errorText}` });
-        }
+        let base64Response = response.text?.trim() || "";
+        
+        // Limpar possíveis formatações indesejadas (caso a IA retorne markdown)
+        base64Response = base64Response.replace(/^```\\w*\\n?/g, '').replace(/\\n?```$/g, '').trim();
 
-        const imageBuffer = await response.arrayBuffer();
-        const base64Response = Buffer.from(imageBuffer).toString('base64');
         const imageUrl = `data:image/png;base64,${base64Response}`;
 
         return res.status(200).json({
@@ -71,7 +66,7 @@ export default async function handler(req: any, res: any) {
         });
 
     } catch (error: any) {
-        console.error("❌ Erro no Backend (edit-image):", error);
-        return res.status(500).json({ error: error.message || "Erro interno no servidor." });
+        console.error("❌ Erro no Backend (edit-image com Gemini):", error);
+        return res.status(500).json({ error: error.message || "Erro interno no servidor editando imagem." });
     }
 }

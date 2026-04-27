@@ -1,4 +1,4 @@
-const apiKey = "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";
+const apiKey = "SUA_CHAVE_AQUI";
 const model = "runwayml/stable-diffusion-v1-5";
 const apiUrl = `https://api-inference.huggingface.co/models/${model}`;
 

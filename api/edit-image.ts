@@ -23,7 +23,8 @@ export default async function handler(req: any, res: any) {
 
     try {
         const { base64Data, mimeType, prompt, secondaryImage } = req.body;
-        const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+        const rawApiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || "";
+        const apiKey = rawApiKey.trim();
 
         if (!apiKey) {
             return res.status(500).json({ error: 'GEMINI_API_KEY não configurada no servidor.' });
@@ -64,7 +65,9 @@ Retorne EXCLUSIVAMENTE a imagem processada em formato base64 puro (sem prefixo d
             ]
         });
 
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+        const response = await fetch(url, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'

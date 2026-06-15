@@ -1,5 +1,4 @@
-// @ts-ignore
-const { GoogleGenAI } = require('@google/genai');
+import { GoogleGenAI } from '@google/genai';
 
 export const config = {
     api: {

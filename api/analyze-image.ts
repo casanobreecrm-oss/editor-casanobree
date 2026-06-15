@@ -1,4 +1,4 @@
-import { GoogleGenAI } from '@google/genai';
+import https from 'https';
 
 export const config = {
     api: {
@@ -9,7 +9,6 @@ export const config = {
 };
 
 export default async function handler(req: any, res: any) {
-    // Adicionando cabeçalhos CORS manuais para evitar falha no navegador em caso de erro
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
@@ -25,17 +24,15 @@ export default async function handler(req: any, res: any) {
 
     try {
         const { base64Data, mimeType, prompt } = req.body;
-        const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+        const rawApiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || "";
+        const apiKey = rawApiKey.replace(/\s+/g, "");
 
         if (!apiKey) {
             return res.status(500).json({ error: 'GEMINI_API_KEY não configurada no servidor.' });
         }
 
-        console.log("🚀 [Backend] Inicializando Gemini Genius via Fetch...");
+        const model = "gemini-2.5-flash"; 
 
-        const model = "gemini-2.5-flash"; // gemini-2.5-flash-image does not exist
-
-        // Cria o prompt do sistema para instruir o Gemini
         const systemInstruction = `
 Você é um especialista em engenharia de prompts para Inteligência Artificial (modelo FLUX).
 Seu objetivo é analisar a imagem fornecida e a instrução de alteração do usuário: "${prompt}".
@@ -44,9 +41,6 @@ O prompt deve ser focado em detalhes visuais, iluminação, realismo e estética
 Não inclua introduções como "Here is your prompt". Responda APENAS com o prompt em inglês.
         `.trim();
 
-        console.log("🚀 [Backend] Enviando para Gemini via REST API...");
-
-        // Remove o prefixo se existir
         const base64WithoutPrefix = base64Data.includes(',') 
             ? base64Data.split(',')[1] 
             : base64Data;
@@ -69,30 +63,49 @@ Não inclua introduções como "Here is your prompt". Responda APENAS com o prom
             ]
         });
 
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+        const options = {
+            hostname: 'generativelanguage.googleapis.com',
+            port: 443,
+            path: `/v1beta/models/${model}:generateContent?key=${apiKey}`,
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json'
-            },
-            body: payload
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(payload)
+            }
+        };
+
+        const data: any = await new Promise((resolve, reject) => {
+            const reqHttp = https.request(options, (resHttp: any) => {
+                let responseData = '';
+                resHttp.on('data', (chunk: any) => { responseData += chunk; });
+                resHttp.on('end', () => {
+                    if (resHttp.statusCode < 200 || resHttp.statusCode >= 300) {
+                        reject(new Error(`Google API Error (${resHttp.statusCode}): ${responseData}`));
+                    } else {
+                        try {
+                            resolve(JSON.parse(responseData));
+                        } catch (e) {
+                            reject(new Error("Erro ao parsear JSON da resposta da Google API."));
+                        }
+                    }
+                });
+            });
+
+            reqHttp.on('error', (e: any) => {
+                reject(new Error(`Erro de rede ao contatar Google API: ${e.message}`));
+            });
+
+            reqHttp.write(payload);
+            reqHttp.end();
         });
 
-        if (!response.ok) {
-            const errText = await response.text();
-            throw new Error(`Google API Error (${response.status}): ${errText}`);
-        }
-
-        const data = await response.json();
-
         const enhancedPrompt = data.candidates?.[0]?.content?.parts?.[0]?.text || prompt;
-        console.log("✅ [Backend] Prompt otimizado pelo Gemini:", enhancedPrompt);
 
         return res.status(200).json({
             enhancedPrompt: enhancedPrompt?.trim() || prompt
         });
 
     } catch (error: any) {
-        console.error("❌ Erro no Backend (analyze-image via Fetch):", error);
         return res.status(500).json({ error: error.message || "Erro interno no servidor analisando imagem." });
     }
 }

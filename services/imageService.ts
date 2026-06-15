@@ -1,10 +1,10 @@
 import { GeneratedImage } from "../types";
 
 /**
- * Edita uma imagem usando modelos de IA do Hugging Face
- * Usa o modelo FLUX.1-dev para edição de imagens de alta qualidade
+ * Edita uma imagem usando modelos de IA do Gemini
+ * Usa o modelo gemini-2.5-flash-image
  */
-export const editImageWithHuggingFace = async (
+export const editImageWithGemini = async (
     base64Data: string,
     mimeType: string,
     prompt: string,
@@ -33,7 +33,7 @@ export const editImageWithHuggingFace = async (
         }
 
         const data = await response.json();
-        console.log("🖼️ Imagem gerada com sucesso via Backend!");
+        console.log("🖼️ Imagem editada com sucesso via Backend!");
 
         return {
             imageUrl: data.imageUrl,
@@ -46,9 +46,9 @@ export const editImageWithHuggingFace = async (
 };
 
 /**
- * Versão alternativa usando text-to-image (se image-to-image não funcionar)
+ * Versão alternativa usando text-to-image
  */
-export const generateImageWithHuggingFace = async (
+export const generateImageWithGemini = async (
     prompt: string
 ): Promise<GeneratedImage> => {
     try {

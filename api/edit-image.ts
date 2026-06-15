@@ -1,5 +1,3 @@
-import { GoogleGenAI } from '@google/genai';
-
 export const config = {
     api: {
         bodyParser: {
@@ -21,8 +19,7 @@ export default async function handler(req: any, res: any) {
             return res.status(500).json({ error: 'GEMINI_API_KEY não configurada no servidor.' });
         }
 
-        console.log("🚀 [Backend] Inicializando Gemini para edição visual...");
-        const ai = new GoogleGenAI({ apiKey });
+        console.log("🚀 [Backend] Inicializando Gemini via REST API para edição visual...");
 
         const model = "gemini-2.5-flash-image";
 
@@ -40,25 +37,50 @@ Retorne EXCLUSIVAMENTE a imagem processada em formato base64 puro (sem prefixo d
         // Remove o prefixo se existir
         const base64WithoutPrefix = base64Data.replace(/^data:image\/\w+;base64,/, "");
 
-        const response = await ai.models.generateContent({
-            model: model,
-            contents: [
-                {
-                    inlineData: {
-                        mimeType: mimeType || "image/jpeg",
-                        data: base64WithoutPrefix
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                contents: [
+                    {
+                        parts: [
+                            {
+                                inlineData: {
+                                    mimeType: mimeType || "image/jpeg",
+                                    data: base64WithoutPrefix
+                                }
+                            },
+                            {
+                                text: systemInstruction + "\\n\\nInstrução do usuário: " + fullPrompt
+                            }
+                        ]
                     }
-                },
-                { text: systemInstruction + "\\n\\nInstrução do usuário: " + fullPrompt }
-            ]
+                ]
+            })
         });
 
-        let base64Response = response.text?.trim() || "";
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Google API Error (${response.status}): ${errorText}`);
+        }
+
+        const data = await response.json();
+        let base64Response = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
         
         // Limpar possíveis formatações indesejadas (caso a IA retorne markdown)
         base64Response = base64Response.replace(/^```\\w*\\n?/g, '').replace(/\\n?```$/g, '').trim();
 
+        if (!base64Response) {
+             throw new Error("A API retornou sucesso, mas não encontrou a string base64 na resposta.");
+        }
+
         const imageUrl = `data:image/png;base64,${base64Response}`;
+
+        console.log("✅ [Backend] Imagem editada com sucesso!");
 
         return res.status(200).json({
             imageUrl,

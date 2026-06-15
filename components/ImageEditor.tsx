@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { AppStatus, ImageFile, GeneratedImage, BatchItem, User } from '../types';
-import { editImageWithHuggingFace, generateImageWithHuggingFace } from '../services/huggingFaceService';
+import { editImageWithGemini, generateImageWithGemini } from '../services/imageService';
 import { analyzeImageWithGemini } from '../services/geminiService';
 import { PhotoIcon, SparklesIcon, ArrowRightIcon, DownloadIcon, TrashIcon, LoadingSpinner, CheckCircleIcon, XCircleIcon, RefreshIcon, LayersIcon, CloudUploadIcon } from './Icons';
 import { CRMUploadModal } from './CRMUploadModal';
@@ -228,8 +228,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ user }) => {
       if (currentPrompt.trim()) {
         const finalPrompt = buildEnrichedPrompt(currentPrompt, item.original.width, item.original.height);
 
-        // Usa Hugging Face para edição de imagens
-        const aiResult = await editImageWithHuggingFace(
+        // Usa Gemini para edição de imagens
+        const aiResult = await editImageWithGemini(
           item.original.base64,
           item.original.mimeType,
           finalPrompt

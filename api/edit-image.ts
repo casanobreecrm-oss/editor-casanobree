@@ -1,3 +1,5 @@
+import https from 'https';
+
 export const config = {
     api: {
         bodyParser: {
@@ -19,7 +21,7 @@ export default async function handler(req: any, res: any) {
             return res.status(500).json({ error: 'GEMINI_API_KEY não configurada no servidor.' });
         }
 
-        console.log("🚀 [Backend] Inicializando Gemini via REST API para edição visual...");
+        console.log("🚀 [Backend] Inicializando Gemini via HTTPS nativo para edição visual...");
 
         const model = "gemini-2.5-flash-image";
 
@@ -34,53 +36,79 @@ Você é um modelo de edição visual avançado. Receba a imagem original e o pr
 Retorne EXCLUSIVAMENTE a imagem processada em formato base64 puro (sem prefixo data:image/png;base64). Não adicione nenhum texto explicativo, Markdown ou aspas. Apenas a string base64.
         `.trim();
 
-        // Remove o prefixo se existir
         const base64WithoutPrefix = base64Data.replace(/^data:image\/\w+;base64,/, "");
 
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                contents: [
-                    {
-                        parts: [
-                            {
-                                inlineData: {
-                                    mimeType: mimeType || "image/jpeg",
-                                    data: base64WithoutPrefix
-                                }
-                            },
-                            {
-                                text: systemInstruction + "\\n\\nInstrução do usuário: " + fullPrompt
+        const payload = JSON.stringify({
+            contents: [
+                {
+                    parts: [
+                        {
+                            inlineData: {
+                                mimeType: mimeType || "image/jpeg",
+                                data: base64WithoutPrefix
                             }
-                        ]
-                    }
-                ]
-            })
+                        },
+                        {
+                            text: systemInstruction + "\\n\\nInstrução do usuário: " + fullPrompt
+                        }
+                    ]
+                }
+            ]
         });
 
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`Google API Error (${response.status}): ${errorText}`);
-        }
+        const options = {
+            hostname: 'generativelanguage.googleapis.com',
+            port: 443,
+            path: `/v1beta/models/${model}:generateContent?key=${apiKey}`,
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(payload)
+            }
+        };
 
-        const data = await response.json();
+        const data = await new Promise<any>((resolve, reject) => {
+            const reqHttps = https.request(options, (resHttps) => {
+                let chunks: Buffer[] = [];
+                
+                resHttps.on('data', (chunk) => {
+                    chunks.push(chunk);
+                });
+
+                resHttps.on('end', () => {
+                    const responseBody = Buffer.concat(chunks).toString();
+                    if (resHttps.statusCode && resHttps.statusCode >= 400) {
+                        reject(new Error(`Google API Error (${resHttps.statusCode}): ${responseBody}`));
+                    } else {
+                        try {
+                            resolve(JSON.parse(responseBody));
+                        } catch (e) {
+                            reject(new Error("Erro ao parsear resposta da API do Google"));
+                        }
+                    }
+                });
+            });
+
+            reqHttps.on('error', (error) => {
+                reject(error);
+            });
+
+            reqHttps.write(payload);
+            reqHttps.end();
+        });
+
         let base64Response = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
         
-        // Limpar possíveis formatações indesejadas (caso a IA retorne markdown)
+        // Limpar possíveis formatações indesejadas
         base64Response = base64Response.replace(/^```\\w*\\n?/g, '').replace(/\\n?```$/g, '').trim();
 
         if (!base64Response) {
-             throw new Error("A API retornou sucesso, mas não encontrou a string base64 na resposta.");
+             throw new Error("A API retornou sucesso, mas não encontrou a string base64 na resposta. O modelo pode não suportar retorno de imagens desta forma.");
         }
 
         const imageUrl = `data:image/png;base64,${base64Response}`;
 
-        console.log("✅ [Backend] Imagem editada com sucesso!");
+        console.log("✅ [Backend] Imagem editada com sucesso via HTTPS!");
 
         return res.status(200).json({
             imageUrl,
@@ -88,7 +116,7 @@ Retorne EXCLUSIVAMENTE a imagem processada em formato base64 puro (sem prefixo d
         });
 
     } catch (error: any) {
-        console.error("❌ Erro no Backend (edit-image com Gemini):", error);
+        console.error("❌ Erro no Backend (edit-image via HTTPS):", error);
         return res.status(500).json({ error: error.message || "Erro interno no servidor editando imagem." });
     }
 }

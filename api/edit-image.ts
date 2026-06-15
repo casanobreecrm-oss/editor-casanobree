@@ -1,3 +1,5 @@
+import https from 'https';
+
 export const config = {
     api: {
         bodyParser: {
@@ -65,22 +67,42 @@ Retorne EXCLUSIVAMENTE a imagem processada em formato base64 puro (sem prefixo d
             ]
         });
 
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-
-        const response = await fetch(url, {
+        // Substituindo fetch nativo por https.request para evitar bugs do Node 18 no Vercel
+        const options = {
+            hostname: 'generativelanguage.googleapis.com',
+            port: 443,
+            path: `/v1beta/models/${model}:generateContent?key=${apiKey}`,
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json'
-            },
-            body: payload
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(payload)
+            }
+        };
+
+        const data: any = await new Promise((resolve, reject) => {
+            const reqHttp = https.request(options, (resHttp: any) => {
+                let responseData = '';
+                resHttp.on('data', (chunk: any) => { responseData += chunk; });
+                resHttp.on('end', () => {
+                    if (resHttp.statusCode < 200 || resHttp.statusCode >= 300) {
+                        reject(new Error(`Google API Error (${resHttp.statusCode}): ${responseData}`));
+                    } else {
+                        try {
+                            resolve(JSON.parse(responseData));
+                        } catch (e) {
+                            reject(new Error("Erro ao parsear JSON da resposta da Google API."));
+                        }
+                    }
+                });
+            });
+
+            reqHttp.on('error', (e: any) => {
+                reject(new Error(`Erro de rede ao contatar Google API: ${e.message}`));
+            });
+
+            reqHttp.write(payload);
+            reqHttp.end();
         });
-
-        if (!response.ok) {
-            const errText = await response.text();
-            throw new Error(`Google API Error (${response.status}): ${errText}`);
-        }
-
-        const data = await response.json();
 
         let base64Response = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
         
@@ -93,7 +115,7 @@ Retorne EXCLUSIVAMENTE a imagem processada em formato base64 puro (sem prefixo d
 
         const imageUrl = `data:image/png;base64,${base64Response}`;
 
-        console.log("✅ [Backend] Imagem editada com sucesso via Fetch!");
+        console.log("✅ [Backend] Imagem editada com sucesso via HTTPS!");
 
         return res.status(200).json({
             imageUrl,

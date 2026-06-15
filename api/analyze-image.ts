@@ -9,6 +9,16 @@ export const config = {
 };
 
 export default async function handler(req: any, res: any) {
+    // Adicionando cabeçalhos CORS manuais para evitar falha no navegador em caso de erro
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+    res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
+
+    if (req.method === 'OPTIONS') {
+        return res.status(200).end();
+    }
+
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Método não permitido' });
     }
@@ -21,10 +31,9 @@ export default async function handler(req: any, res: any) {
             return res.status(500).json({ error: 'GEMINI_API_KEY não configurada no servidor.' });
         }
 
-        console.log("🚀 [Backend] Inicializando Gemini Genius...");
-        const ai = new GoogleGenAI({ apiKey });
+        console.log("🚀 [Backend] Inicializando Gemini Genius via Fetch...");
 
-        const model = "gemini-2.5-flash-image";
+        const model = "gemini-2.5-flash"; // gemini-2.5-flash-image does not exist
 
         // Cria o prompt do sistema para instruir o Gemini
         const systemInstruction = `
@@ -35,27 +44,47 @@ O prompt deve ser focado em detalhes visuais, iluminação, realismo e estética
 Não inclua introduções como "Here is your prompt". Responda APENAS com o prompt em inglês.
         `.trim();
 
-        console.log("🚀 [Backend] Enviando para Gemini 2.0 Flash...");
+        console.log("🚀 [Backend] Enviando para Gemini via REST API...");
 
         // Remove o prefixo se existir
         const base64WithoutPrefix = base64Data.includes(',') 
             ? base64Data.split(',')[1] 
             : base64Data;
 
-        const response = await ai.models.generateContent({
-            model: model,
+        const payload = JSON.stringify({
             contents: [
                 {
-                    inlineData: {
-                        mimeType: mimeType || "image/jpeg",
-                        data: base64WithoutPrefix
-                    }
-                },
-                { text: systemInstruction }
+                    parts: [
+                        {
+                            inlineData: {
+                                mimeType: mimeType || "image/jpeg",
+                                data: base64WithoutPrefix
+                            }
+                        },
+                        {
+                            text: systemInstruction
+                        }
+                    ]
+                }
             ]
         });
 
-        const enhancedPrompt = response.text;
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: payload
+        });
+
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`Google API Error (${response.status}): ${errText}`);
+        }
+
+        const data = await response.json();
+
+        const enhancedPrompt = data.candidates?.[0]?.content?.parts?.[0]?.text || prompt;
         console.log("✅ [Backend] Prompt otimizado pelo Gemini:", enhancedPrompt);
 
         return res.status(200).json({
@@ -63,7 +92,7 @@ Não inclua introduções como "Here is your prompt". Responda APENAS com o prom
         });
 
     } catch (error: any) {
-        console.error("❌ Erro no Backend (analyze-image):", error);
+        console.error("❌ Erro no Backend (analyze-image via Fetch):", error);
         return res.status(500).json({ error: error.message || "Erro interno no servidor analisando imagem." });
     }
 }

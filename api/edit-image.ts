@@ -63,9 +63,9 @@ export default async function handler(req: any, res: any) {
         const postData = Buffer.concat(postDataChunks);
 
         const options = {
-            hostname: 'api-inference.huggingface.co',
+            hostname: 'router.huggingface.co',
             port: 443,
-            path: `/models/${model}`,
+            path: `/hf-inference/models/${model}`,
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${apiKey}`,

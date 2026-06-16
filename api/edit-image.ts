@@ -1,4 +1,5 @@
 import https from 'https';
+
 export const maxDuration = 60;
 
 export const config = {
@@ -25,52 +26,35 @@ export default async function handler(req: any, res: any) {
 
     try {
         const { base64Data, mimeType, prompt, secondaryImage } = req.body;
-        const apiKey = process.env.HUGGINGFACE_API_KEY;
+        // Agora usamos a chave do fal.ai
+        const apiKey = process.env.FAL_KEY || process.env.HUGGINGFACE_API_KEY;
 
         if (!apiKey) {
-            return res.status(500).json({ error: 'HUGGINGFACE_API_KEY não configurada no servidor.' });
+            return res.status(500).json({ error: 'FAL_KEY não configurada no servidor.' });
         }
 
-        const model = "runwayml/stable-diffusion-v1-5"; 
-        console.log("🚀 [Backend] Enviando requisição de edição para Hugging Face via HTTPS manual...");
-
-        const base64WithoutPrefix = base64Data.replace(/^data:image\/\w+;base64,/, "");
-        const imageBuffer = Buffer.from(base64WithoutPrefix, 'base64');
+        console.log("🚀 [Backend] Enviando requisição de edição para fal.ai...");
 
         let fullPrompt = prompt;
         if (secondaryImage) {
             fullPrompt += " (com marca d'água/logo aplicada)";
         }
 
-        const boundary = '----WebKitFormBoundary7MA4YWxkTrZu0gW';
-        const crlf = '\\r\\n';
-
-        // Constroi o corpo Multipart
-        const postDataChunks = [];
-
-        // Adiciona prompt
-        postDataChunks.push(Buffer.from(
-            `--${boundary}${crlf}Content-Disposition: form-data; name="inputs"${crlf}${crlf}${fullPrompt}${crlf}`
-        ));
-
-        // Adiciona image
-        postDataChunks.push(Buffer.from(
-            `--${boundary}${crlf}Content-Disposition: form-data; name="image"; filename="image.png"${crlf}Content-Type: ${mimeType || 'image/png'}${crlf}${crlf}`
-        ));
-        postDataChunks.push(imageBuffer);
-        postDataChunks.push(Buffer.from(`${crlf}--${boundary}--${crlf}`));
-
-        const postData = Buffer.concat(postDataChunks);
+        const payloadString = JSON.stringify({
+            image_url: base64Data,
+            prompt: fullPrompt,
+            strength: 0.85
+        });
 
         const options = {
-            hostname: 'router.huggingface.co',
+            hostname: 'fal.run',
             port: 443,
-            path: `/hf-inference/models/${model}`,
+            path: '/fal-ai/fast-sdxl/image-to-image',
             method: 'POST',
             headers: {
-                'Authorization': `Bearer ${apiKey}`,
-                'Content-Type': `multipart/form-data; boundary=${boundary}`,
-                'Content-Length': postData.length
+                'Authorization': `Key ${apiKey}`,
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(payloadString)
             }
         };
 
@@ -82,11 +66,7 @@ export default async function handler(req: any, res: any) {
                     const buffer = Buffer.concat(chunks);
                     if (resHttp.statusCode < 200 || resHttp.statusCode >= 300) {
                         const errorText = buffer.toString();
-                        if (errorText.includes('is currently loading') || resHttp.statusCode === 503) {
-                            reject(new Error("O modelo de IA está sendo carregado (wake up). Por favor, aguarde 20 segundos e tente novamente!"));
-                        } else {
-                            reject(new Error(`Hugging Face API Error (${resHttp.statusCode}): ${errorText}`));
-                        }
+                        reject(new Error(`Fal.ai API Error (${resHttp.statusCode}): ${errorText}`));
                     } else {
                         resolve(buffer);
                     }
@@ -97,16 +77,24 @@ export default async function handler(req: any, res: any) {
                 reject(new Error(`Erro de rede: ${e.message}`));
             });
 
-            reqHttp.write(postData);
+            reqHttp.write(payloadString);
             reqHttp.end();
         });
 
-        const base64Response = resultBuffer.toString('base64');
-        const imageUrl = `data:image/png;base64,${base64Response}`;
+        const data = JSON.parse(resultBuffer.toString());
+        
+        if (!data.images || data.images.length === 0) {
+            throw new Error("A API não retornou imagens.");
+        }
+
+        // Fal.ai costuma retornar a URL da imagem hospedada ou base64 (geralmente URL)
+        // O nosso frontend aceita URL diretamente, mas se o frontend espera imageUrl: base64, 
+        // vamos retornar a imageUrl do fal.ai que o frontend renderiza no <img> src de boa.
+        const imageUrl = data.images[0].url;
 
         return res.status(200).json({
             imageUrl,
-            mimeType: "image/png"
+            mimeType: "image/jpeg"
         });
 
     } catch (error: any) {

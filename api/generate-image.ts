@@ -1,54 +1,65 @@
 import https from 'https';
+
 export const maxDuration = 60;
 
 export const config = {
     api: {
         bodyParser: {
-            sizeLimit: '20mb',
+            sizeLimit: '10mb',
         },
     },
 };
 
 export default async function handler(req: any, res: any) {
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+    res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
+
+    if (req.method === 'OPTIONS') {
+        return res.status(200).end();
+    }
+
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Método não permitido' });
     }
 
     try {
         const { prompt } = req.body;
-        const apiKey = process.env.HUGGINGFACE_API_KEY;
+        const apiKey = process.env.FAL_KEY || process.env.HUGGINGFACE_API_KEY;
 
         if (!apiKey) {
-            return res.status(500).json({ error: 'HUGGINGFACE_API_KEY não configurada no servidor.' });
+            return res.status(500).json({ error: 'FAL_KEY não configurada no servidor.' });
         }
 
-        console.log("🚀 [Backend] Gerando imagem com Hugging Face (FLUX)...");
-        const model = "black-forest-labs/FLUX.1-schnell"; // Fast and free FLUX model
+        console.log("🚀 [Backend] Enviando requisição de geração para fal.ai...");
 
-        const payload = JSON.stringify({
-            inputs: prompt
+        const payloadString = JSON.stringify({
+            prompt: prompt,
+            image_size: "landscape_4_3"
         });
 
         const options = {
-            hostname: 'router.huggingface.co',
+            hostname: 'fal.run',
             port: 443,
-            path: `/hf-inference/models/${model}`,
+            path: '/fal-ai/fast-sdxl',
             method: 'POST',
             headers: {
-                'Authorization': `Bearer ${apiKey}`,
+                'Authorization': `Key ${apiKey}`,
                 'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(payload)
+                'Content-Length': Buffer.byteLength(payloadString)
             }
         };
 
-        const imageBuffer: Buffer = await new Promise((resolve, reject) => {
+        const resultBuffer: Buffer = await new Promise((resolve, reject) => {
             const reqHttp = https.request(options, (resHttp: any) => {
                 const chunks: any[] = [];
                 resHttp.on('data', (chunk: any) => chunks.push(chunk));
                 resHttp.on('end', () => {
                     const buffer = Buffer.concat(chunks);
                     if (resHttp.statusCode < 200 || resHttp.statusCode >= 300) {
-                        reject(new Error(`Hugging Face API Error (${resHttp.statusCode}): ${buffer.toString()}`));
+                        const errorText = buffer.toString();
+                        reject(new Error(`Fal.ai API Error (${resHttp.statusCode}): ${errorText}`));
                     } else {
                         resolve(buffer);
                     }
@@ -56,15 +67,20 @@ export default async function handler(req: any, res: any) {
             });
 
             reqHttp.on('error', (e: any) => {
-                reject(new Error(`Erro de rede ao contatar Hugging Face: ${e.message}`));
+                reject(new Error(`Erro de rede: ${e.message}`));
             });
 
-            reqHttp.write(payload);
+            reqHttp.write(payloadString);
             reqHttp.end();
         });
 
-        const base64Response = imageBuffer.toString('base64');
-        const imageUrl = `data:image/jpeg;base64,${base64Response}`;
+        const data = JSON.parse(resultBuffer.toString());
+        
+        if (!data.images || data.images.length === 0) {
+            throw new Error("A API não retornou imagens.");
+        }
+
+        const imageUrl = data.images[0].url;
 
         return res.status(200).json({
             imageUrl,

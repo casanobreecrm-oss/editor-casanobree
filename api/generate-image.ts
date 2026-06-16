@@ -1,4 +1,5 @@
-import { GoogleGenAI } from '@google/genai';
+import https from 'https';
+export const maxDuration = 60;
 
 export const config = {
     api: {
@@ -15,43 +16,63 @@ export default async function handler(req: any, res: any) {
 
     try {
         const { prompt } = req.body;
-        const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+        const apiKey = process.env.HUGGINGFACE_API_KEY;
 
         if (!apiKey) {
-            return res.status(500).json({ error: 'GEMINI_API_KEY não configurada no servidor.' });
+            return res.status(500).json({ error: 'HUGGINGFACE_API_KEY não configurada no servidor.' });
         }
 
-        console.log("🚀 [Backend] Gerando imagem com Gemini API...");
-        const ai = new GoogleGenAI({ apiKey });
+        console.log("🚀 [Backend] Gerando imagem com Hugging Face (FLUX)...");
+        const model = "black-forest-labs/FLUX.1-schnell"; // Fast and free FLUX model
 
-        const model = "gemini-2.5-flash-image";
-
-        const systemInstruction = `
-Você é um modelo de geração visual avançado. Receba o prompt do usuário e gere a imagem de acordo com as instruções.
-Retorne EXCLUSIVAMENTE a imagem processada em formato base64 puro (sem prefixo data:image/png;base64). Não adicione nenhum texto explicativo, Markdown ou aspas. Apenas a string base64.
-        `.trim();
-
-        const response = await ai.models.generateContent({
-            model: model,
-            contents: [
-                { text: systemInstruction + "\\n\\nInstrução do usuário: " + prompt }
-            ]
+        const payload = JSON.stringify({
+            inputs: prompt
         });
 
-        let base64Response = response.text?.trim() || "";
-        
-        // Limpar possíveis formatações indesejadas (caso a IA retorne markdown)
-        base64Response = base64Response.replace(/^```\\w*\\n?/g, '').replace(/\\n?```$/g, '').trim();
+        const options = {
+            hostname: 'api-inference.huggingface.co',
+            port: 443,
+            path: `/models/${model}`,
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(payload)
+            }
+        };
 
-        const imageUrl = `data:image/png;base64,${base64Response}`;
+        const imageBuffer: Buffer = await new Promise((resolve, reject) => {
+            const reqHttp = https.request(options, (resHttp: any) => {
+                const chunks: any[] = [];
+                resHttp.on('data', (chunk: any) => chunks.push(chunk));
+                resHttp.on('end', () => {
+                    const buffer = Buffer.concat(chunks);
+                    if (resHttp.statusCode < 200 || resHttp.statusCode >= 300) {
+                        reject(new Error(`Hugging Face API Error (${resHttp.statusCode}): ${buffer.toString()}`));
+                    } else {
+                        resolve(buffer);
+                    }
+                });
+            });
+
+            reqHttp.on('error', (e: any) => {
+                reject(new Error(`Erro de rede ao contatar Hugging Face: ${e.message}`));
+            });
+
+            reqHttp.write(payload);
+            reqHttp.end();
+        });
+
+        const base64Response = imageBuffer.toString('base64');
+        const imageUrl = `data:image/jpeg;base64,${base64Response}`;
 
         return res.status(200).json({
             imageUrl,
-            mimeType: "image/png"
+            mimeType: "image/jpeg"
         });
 
     } catch (error: any) {
-        console.error("❌ Erro no Backend (generate-image com Gemini):", error);
-        return res.status(500).json({ error: error.message || "Erro interno no servidor gerando imagem." });
+        console.error("❌ Erro no Backend (generate-image):", error);
+        return res.status(500).json({ error: error.message || "Erro interno no servidor." });
     }
 }

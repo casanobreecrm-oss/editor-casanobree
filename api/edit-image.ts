@@ -1,4 +1,3 @@
-import https from 'https';
 export const maxDuration = 60;
 
 export const config = {
@@ -10,7 +9,6 @@ export const config = {
 };
 
 export default async function handler(req: any, res: any) {
-    // Adicionando cabeçalhos CORS manuais para evitar falha no navegador em caso de erro
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
@@ -26,97 +24,54 @@ export default async function handler(req: any, res: any) {
 
     try {
         const { base64Data, mimeType, prompt, secondaryImage } = req.body;
-        const rawApiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || "";
-        const apiKey = rawApiKey.replace(/\s+/g, "");
+        const apiKey = process.env.HUGGINGFACE_API_KEY;
 
         if (!apiKey) {
-            return res.status(500).json({ error: 'GEMINI_API_KEY não configurada no servidor.' });
+            return res.status(500).json({ error: 'HUGGINGFACE_API_KEY não configurada no servidor.' });
         }
 
-        console.log("🚀 [Backend] Inicializando Gemini via Fetch nativo para edição visual...");
+        const model = "runwayml/stable-diffusion-v1-5"; // Reliable image-to-image model
+        const apiUrl = `https://api-inference.huggingface.co/models/${model}`;
 
-        const model = "gemini-2.5-flash"; // Usando o modelo padrão suportado! gemini-2.5-flash-image não existe.
-
-        // Cria o prompt completo
-        let fullPrompt = prompt;
-        if (secondaryImage) {
-            fullPrompt += " (aplique a marca d'água ou logo informada visualmente)";
-        }
-
-        const systemInstruction = `
-Você é um modelo de edição visual avançado. Receba a imagem original e o prompt do usuário, e gere a nova versão da foto editada de acordo com as instruções.
-Retorne EXCLUSIVAMENTE a imagem processada em formato base64 puro (sem prefixo data:image/png;base64). Não adicione nenhum texto explicativo, Markdown ou aspas. Apenas a string base64.
-        `.trim();
+        console.log("🚀 [Backend] Enviando requisição de edição para Hugging Face API...");
 
         const base64WithoutPrefix = base64Data.replace(/^data:image\/\w+;base64,/, "");
+        const buffer = Buffer.from(base64WithoutPrefix, 'base64');
 
-        const payload = JSON.stringify({
-            contents: [
-                {
-                    parts: [
-                        {
-                            inlineData: {
-                                mimeType: mimeType || "image/jpeg",
-                                data: base64WithoutPrefix
-                            }
-                        },
-                        {
-                            text: systemInstruction + "\n\nInstrução do usuário: " + fullPrompt
-                        }
-                    ]
-                }
-            ]
-        });
-
-        // Substituindo fetch nativo por https.request para evitar bugs do Node 18 no Vercel
-        const options = {
-            hostname: 'generativelanguage.googleapis.com',
-            port: 443,
-            path: `/v1beta/models/${model}:generateContent?key=${apiKey}`,
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(payload)
-            }
-        };
-
-        const data: any = await new Promise((resolve, reject) => {
-            const reqHttp = https.request(options, (resHttp: any) => {
-                let responseData = '';
-                resHttp.on('data', (chunk: any) => { responseData += chunk; });
-                resHttp.on('end', () => {
-                    if (resHttp.statusCode < 200 || resHttp.statusCode >= 300) {
-                        reject(new Error(`Google API Error (${resHttp.statusCode}): ${responseData}`));
-                    } else {
-                        try {
-                            resolve(JSON.parse(responseData));
-                        } catch (e) {
-                            reject(new Error("Erro ao parsear JSON da resposta da Google API."));
-                        }
-                    }
-                });
-            });
-
-            reqHttp.on('error', (e: any) => {
-                reject(new Error(`Erro de rede ao contatar Google API: ${e.message}`));
-            });
-
-            reqHttp.write(payload);
-            reqHttp.end();
-        });
-
-        let base64Response = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
+        let fullPrompt = prompt;
+        if (secondaryImage) {
+            fullPrompt += " (com marca d'água/logo aplicada)";
+        }
         
-        // Limpar possíveis formatações indesejadas
-        base64Response = base64Response.replace(/^```\w*\n?/g, '').replace(/\n?```$/g, '').trim();
+        const formData = new FormData();
+        formData.append("inputs", fullPrompt);
+        
+        const blob = new Blob([buffer], { type: mimeType });
+        formData.append("image", blob, "image.png");
 
-        if (!base64Response) {
-             throw new Error("A API retornou sucesso, mas não encontrou a string base64 na resposta. O modelo pode não suportar retorno de imagens desta forma.");
+        const response = await fetch(apiUrl, {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${apiKey}`,
+            },
+            body: formData,
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error("❌ Erro da API Hugging Face:", errorText);
+            
+            // Tratamento especial para erro de loading do modelo
+            if (errorText.includes('is currently loading') || response.status === 503) {
+                return res.status(503).json({ error: "O modelo de IA está sendo carregado (wake up). Por favor, aguarde 20 segundos e tente novamente!" });
+            }
+            
+            return res.status(response.status).json({ error: `Erro Hugging Face: ${errorText}` });
         }
 
+        const imageBuffer = await response.arrayBuffer();
+        const base64Response = Buffer.from(imageBuffer).toString('base64');
         const imageUrl = `data:image/png;base64,${base64Response}`;
-
-        console.log("✅ [Backend] Imagem editada com sucesso via HTTPS!");
 
         return res.status(200).json({
             imageUrl,
@@ -124,10 +79,7 @@ Retorne EXCLUSIVAMENTE a imagem processada em formato base64 puro (sem prefixo d
         });
 
     } catch (error: any) {
-        console.error("❌ Erro no Backend (edit-image via Fetch):", error);
-        return res.status(500).json({ 
-            error: error.message || "Erro interno no servidor editando imagem.",
-            stack: error.stack
-        });
+        console.error("❌ Erro no Backend (edit-image):", error);
+        return res.status(500).json({ error: error.message || "Erro interno no servidor." });
     }
 }

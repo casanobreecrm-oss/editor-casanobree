@@ -1,7 +1,5 @@
 import https from 'https';
 
-export const maxDuration = 60;
-
 export const config = {
     api: {
         bodyParser: {
@@ -11,94 +9,114 @@ export const config = {
 };
 
 export default async function handler(req: any, res: any) {
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
-    res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
-
-    if (req.method === 'OPTIONS') {
-        return res.status(200).end();
-    }
-
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Método não permitido' });
     }
 
     try {
         const { base64Data, mimeType, prompt, secondaryImage } = req.body;
-        // Agora usamos a chave do fal.ai
-        const apiKey = process.env.FAL_KEY || process.env.HUGGINGFACE_API_KEY;
+        const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
 
         if (!apiKey) {
-            return res.status(500).json({ error: 'FAL_KEY não configurada no servidor.' });
+            return res.status(500).json({ error: 'GEMINI_API_KEY não configurada no servidor.' });
         }
 
-        console.log("🚀 [Backend] Enviando requisição de edição para fal.ai...");
+        console.log("🚀 [Backend] Inicializando Gemini via HTTPS nativo para edição visual...");
 
+        const model = "gemini-2.5-flash-image";
+
+        // Cria o prompt completo
         let fullPrompt = prompt;
         if (secondaryImage) {
-            fullPrompt += " (com marca d'água/logo aplicada)";
+            fullPrompt += " (aplique a marca d'água ou logo informada visualmente)";
         }
 
-        const payloadString = JSON.stringify({
-            image_url: base64Data,
-            prompt: fullPrompt,
-            strength: 0.85
+        const systemInstruction = `
+Você é um modelo de edição visual avançado. Receba a imagem original e o prompt do usuário, e gere a nova versão da foto editada de acordo com as instruções.
+Retorne EXCLUSIVAMENTE a imagem processada em formato base64 puro (sem prefixo data:image/png;base64). Não adicione nenhum texto explicativo, Markdown ou aspas. Apenas a string base64.
+        `.trim();
+
+        const base64WithoutPrefix = base64Data.replace(/^data:image\/\w+;base64,/, "");
+
+        const payload = JSON.stringify({
+            contents: [
+                {
+                    parts: [
+                        {
+                            inlineData: {
+                                mimeType: mimeType || "image/jpeg",
+                                data: base64WithoutPrefix
+                            }
+                        },
+                        {
+                            text: systemInstruction + "\\n\\nInstrução do usuário: " + fullPrompt
+                        }
+                    ]
+                }
+            ]
         });
 
         const options = {
-            hostname: 'fal.run',
+            hostname: 'generativelanguage.googleapis.com',
             port: 443,
-            path: '/fal-ai/fast-sdxl/image-to-image',
+            path: `/v1beta/models/${model}:generateContent?key=${apiKey}`,
             method: 'POST',
             headers: {
-                'Authorization': `Key ${apiKey}`,
                 'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(payloadString)
+                'Content-Length': Buffer.byteLength(payload)
             }
         };
 
-        const resultBuffer: Buffer = await new Promise((resolve, reject) => {
-            const reqHttp = https.request(options, (resHttp: any) => {
-                const chunks: any[] = [];
-                resHttp.on('data', (chunk: any) => chunks.push(chunk));
-                resHttp.on('end', () => {
-                    const buffer = Buffer.concat(chunks);
-                    if (resHttp.statusCode < 200 || resHttp.statusCode >= 300) {
-                        const errorText = buffer.toString();
-                        reject(new Error(`Fal.ai API Error (${resHttp.statusCode}): ${errorText}`));
+        const data = await new Promise<any>((resolve, reject) => {
+            const reqHttps = https.request(options, (resHttps) => {
+                let chunks: Buffer[] = [];
+                
+                resHttps.on('data', (chunk) => {
+                    chunks.push(chunk);
+                });
+
+                resHttps.on('end', () => {
+                    const responseBody = Buffer.concat(chunks).toString();
+                    if (resHttps.statusCode && resHttps.statusCode >= 400) {
+                        reject(new Error(`Google API Error (${resHttps.statusCode}): ${responseBody}`));
                     } else {
-                        resolve(buffer);
+                        try {
+                            resolve(JSON.parse(responseBody));
+                        } catch (e) {
+                            reject(new Error("Erro ao parsear resposta da API do Google"));
+                        }
                     }
                 });
             });
 
-            reqHttp.on('error', (e: any) => {
-                reject(new Error(`Erro de rede: ${e.message}`));
+            reqHttps.on('error', (error) => {
+                reject(error);
             });
 
-            reqHttp.write(payloadString);
-            reqHttp.end();
+            reqHttps.write(payload);
+            reqHttps.end();
         });
 
-        const data = JSON.parse(resultBuffer.toString());
+        let base64Response = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
         
-        if (!data.images || data.images.length === 0) {
-            throw new Error("A API não retornou imagens.");
+        // Limpar possíveis formatações indesejadas
+        base64Response = base64Response.replace(/^```\\w*\\n?/g, '').replace(/\\n?```$/g, '').trim();
+
+        if (!base64Response) {
+             throw new Error("A API retornou sucesso, mas não encontrou a string base64 na resposta. O modelo pode não suportar retorno de imagens desta forma.");
         }
 
-        // Fal.ai costuma retornar a URL da imagem hospedada ou base64 (geralmente URL)
-        // O nosso frontend aceita URL diretamente, mas se o frontend espera imageUrl: base64, 
-        // vamos retornar a imageUrl do fal.ai que o frontend renderiza no <img> src de boa.
-        const imageUrl = data.images[0].url;
+        const imageUrl = `data:image/png;base64,${base64Response}`;
+
+        console.log("✅ [Backend] Imagem editada com sucesso via HTTPS!");
 
         return res.status(200).json({
             imageUrl,
-            mimeType: "image/jpeg"
+            mimeType: "image/png"
         });
 
     } catch (error: any) {
-        console.error("❌ Erro no Backend (edit-image):", error);
-        return res.status(500).json({ error: error.message || "Erro interno no servidor." });
+        console.error("❌ Erro no Backend (edit-image via HTTPS):", error);
+        return res.status(500).json({ error: error.message || "Erro interno no servidor editando imagem." });
     }
 }

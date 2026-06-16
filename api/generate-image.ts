@@ -1,94 +1,57 @@
-import https from 'https';
-
-export const maxDuration = 60;
+import { GoogleGenAI } from '@google/genai';
 
 export const config = {
     api: {
         bodyParser: {
-            sizeLimit: '10mb',
+            sizeLimit: '20mb',
         },
     },
 };
 
 export default async function handler(req: any, res: any) {
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
-    res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
-
-    if (req.method === 'OPTIONS') {
-        return res.status(200).end();
-    }
-
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Método não permitido' });
     }
 
     try {
         const { prompt } = req.body;
-        const apiKey = process.env.FAL_KEY || process.env.HUGGINGFACE_API_KEY;
+        const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
 
         if (!apiKey) {
-            return res.status(500).json({ error: 'FAL_KEY não configurada no servidor.' });
+            return res.status(500).json({ error: 'GEMINI_API_KEY não configurada no servidor.' });
         }
 
-        console.log("🚀 [Backend] Enviando requisição de geração para fal.ai...");
+        console.log("🚀 [Backend] Gerando imagem com Gemini API...");
+        const ai = new GoogleGenAI({ apiKey });
 
-        const payloadString = JSON.stringify({
-            prompt: prompt,
-            image_size: "landscape_4_3"
+        const model = "gemini-2.5-flash-image";
+
+        const systemInstruction = `
+Você é um modelo de geração visual avançado. Receba o prompt do usuário e gere a imagem de acordo com as instruções.
+Retorne EXCLUSIVAMENTE a imagem processada em formato base64 puro (sem prefixo data:image/png;base64). Não adicione nenhum texto explicativo, Markdown ou aspas. Apenas a string base64.
+        `.trim();
+
+        const response = await ai.models.generateContent({
+            model: model,
+            contents: [
+                { text: systemInstruction + "\\n\\nInstrução do usuário: " + prompt }
+            ]
         });
 
-        const options = {
-            hostname: 'fal.run',
-            port: 443,
-            path: '/fal-ai/fast-sdxl',
-            method: 'POST',
-            headers: {
-                'Authorization': `Key ${apiKey}`,
-                'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(payloadString)
-            }
-        };
-
-        const resultBuffer: Buffer = await new Promise((resolve, reject) => {
-            const reqHttp = https.request(options, (resHttp: any) => {
-                const chunks: any[] = [];
-                resHttp.on('data', (chunk: any) => chunks.push(chunk));
-                resHttp.on('end', () => {
-                    const buffer = Buffer.concat(chunks);
-                    if (resHttp.statusCode < 200 || resHttp.statusCode >= 300) {
-                        const errorText = buffer.toString();
-                        reject(new Error(`Fal.ai API Error (${resHttp.statusCode}): ${errorText}`));
-                    } else {
-                        resolve(buffer);
-                    }
-                });
-            });
-
-            reqHttp.on('error', (e: any) => {
-                reject(new Error(`Erro de rede: ${e.message}`));
-            });
-
-            reqHttp.write(payloadString);
-            reqHttp.end();
-        });
-
-        const data = JSON.parse(resultBuffer.toString());
+        let base64Response = response.text?.trim() || "";
         
-        if (!data.images || data.images.length === 0) {
-            throw new Error("A API não retornou imagens.");
-        }
+        // Limpar possíveis formatações indesejadas (caso a IA retorne markdown)
+        base64Response = base64Response.replace(/^```\\w*\\n?/g, '').replace(/\\n?```$/g, '').trim();
 
-        const imageUrl = data.images[0].url;
+        const imageUrl = `data:image/png;base64,${base64Response}`;
 
         return res.status(200).json({
             imageUrl,
-            mimeType: "image/jpeg"
+            mimeType: "image/png"
         });
 
     } catch (error: any) {
-        console.error("❌ Erro no Backend (generate-image):", error);
-        return res.status(500).json({ error: error.message || "Erro interno no servidor." });
+        console.error("❌ Erro no Backend (generate-image com Gemini):", error);
+        return res.status(500).json({ error: error.message || "Erro interno no servidor gerando imagem." });
     }
 }

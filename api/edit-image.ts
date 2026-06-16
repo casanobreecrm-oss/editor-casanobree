@@ -1,3 +1,4 @@
+import https from 'https';
 export const maxDuration = 60;
 
 export const config = {
@@ -30,47 +31,77 @@ export default async function handler(req: any, res: any) {
             return res.status(500).json({ error: 'HUGGINGFACE_API_KEY não configurada no servidor.' });
         }
 
-        const model = "runwayml/stable-diffusion-v1-5"; // Reliable image-to-image model
-        const apiUrl = `https://api-inference.huggingface.co/models/${model}`;
-
-        console.log("🚀 [Backend] Enviando requisição de edição para Hugging Face API...");
+        const model = "runwayml/stable-diffusion-v1-5"; 
+        console.log("🚀 [Backend] Enviando requisição de edição para Hugging Face via HTTPS manual...");
 
         const base64WithoutPrefix = base64Data.replace(/^data:image\/\w+;base64,/, "");
-        const buffer = Buffer.from(base64WithoutPrefix, 'base64');
+        const imageBuffer = Buffer.from(base64WithoutPrefix, 'base64');
 
         let fullPrompt = prompt;
         if (secondaryImage) {
             fullPrompt += " (com marca d'água/logo aplicada)";
         }
-        
-        const formData = new FormData();
-        formData.append("inputs", fullPrompt);
-        
-        const blob = new Blob([buffer], { type: mimeType });
-        formData.append("image", blob, "image.png");
 
-        const response = await fetch(apiUrl, {
-            method: "POST",
+        const boundary = '----WebKitFormBoundary7MA4YWxkTrZu0gW';
+        const crlf = '\\r\\n';
+
+        // Constroi o corpo Multipart
+        const postDataChunks = [];
+
+        // Adiciona prompt
+        postDataChunks.push(Buffer.from(
+            `--${boundary}${crlf}Content-Disposition: form-data; name="inputs"${crlf}${crlf}${fullPrompt}${crlf}`
+        ));
+
+        // Adiciona image
+        postDataChunks.push(Buffer.from(
+            `--${boundary}${crlf}Content-Disposition: form-data; name="image"; filename="image.png"${crlf}Content-Type: ${mimeType || 'image/png'}${crlf}${crlf}`
+        ));
+        postDataChunks.push(imageBuffer);
+        postDataChunks.push(Buffer.from(`${crlf}--${boundary}--${crlf}`));
+
+        const postData = Buffer.concat(postDataChunks);
+
+        const options = {
+            hostname: 'api-inference.huggingface.co',
+            port: 443,
+            path: `/models/${model}`,
+            method: 'POST',
             headers: {
-                Authorization: `Bearer ${apiKey}`,
-            },
-            body: formData,
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': `multipart/form-data; boundary=${boundary}`,
+                'Content-Length': postData.length
+            }
+        };
+
+        const resultBuffer: Buffer = await new Promise((resolve, reject) => {
+            const reqHttp = https.request(options, (resHttp: any) => {
+                const chunks: any[] = [];
+                resHttp.on('data', (chunk: any) => chunks.push(chunk));
+                resHttp.on('end', () => {
+                    const buffer = Buffer.concat(chunks);
+                    if (resHttp.statusCode < 200 || resHttp.statusCode >= 300) {
+                        const errorText = buffer.toString();
+                        if (errorText.includes('is currently loading') || resHttp.statusCode === 503) {
+                            reject(new Error("O modelo de IA está sendo carregado (wake up). Por favor, aguarde 20 segundos e tente novamente!"));
+                        } else {
+                            reject(new Error(`Hugging Face API Error (${resHttp.statusCode}): ${errorText}`));
+                        }
+                    } else {
+                        resolve(buffer);
+                    }
+                });
+            });
+
+            reqHttp.on('error', (e: any) => {
+                reject(new Error(`Erro de rede: ${e.message}`));
+            });
+
+            reqHttp.write(postData);
+            reqHttp.end();
         });
 
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error("❌ Erro da API Hugging Face:", errorText);
-            
-            // Tratamento especial para erro de loading do modelo
-            if (errorText.includes('is currently loading') || response.status === 503) {
-                return res.status(503).json({ error: "O modelo de IA está sendo carregado (wake up). Por favor, aguarde 20 segundos e tente novamente!" });
-            }
-            
-            return res.status(response.status).json({ error: `Erro Hugging Face: ${errorText}` });
-        }
-
-        const imageBuffer = await response.arrayBuffer();
-        const base64Response = Buffer.from(imageBuffer).toString('base64');
+        const base64Response = resultBuffer.toString('base64');
         const imageUrl = `data:image/png;base64,${base64Response}`;
 
         return res.status(200).json({
